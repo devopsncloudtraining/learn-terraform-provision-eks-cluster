@@ -9,6 +9,12 @@ terraform {
   #   }
   # }
 
+  backend "s3" {
+    bucket = "tf-state-file-4-az-pipeline-eks" # Will be overridden from build
+    key    = "terraform.tfstate" # Will be overridden from build
+    region = "us-east-1"
+  }
+
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -29,14 +35,6 @@ terraform {
       source  = "hashicorp/cloudinit"
       version = "~> 2.3.4"
     }
-
-    backend "s3" {
-      bucket = "tf-state-file-4-az-pipeline-eks" # Will be overridden from build
-      key    = "terraform.tfstate" # Will be overridden from build
-      region = "us-east-1"
-    }
-
-
   }
 
   required_version = "~> 1.3"
