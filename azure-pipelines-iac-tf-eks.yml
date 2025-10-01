@@ -40,3 +40,13 @@ steps:
     awsCommand: 'eks'
     awsSubCommand: 'update-kubeconfig'
     awsArguments: '--name education-eks-E5JUa2tE'
+
+- task: Kubernetes@1
+  inputs:
+    connectionType: 'Kubernetes Service Connection'
+    kubernetesServiceEndpoint: 'KubernetesServiceConnection'
+    namespace: 'default'
+    command: 'get'
+    arguments: 'pods'
+    secretType: 'dockerRegistry'
+    containerRegistryType: 'Azure Container Registry'
