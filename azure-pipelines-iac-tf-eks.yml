@@ -32,3 +32,11 @@ steps:
     echo Add other tasks to build, test, and deploy your project.
     echo See https://aka.ms/yaml
   displayName: 'Run a multi-line script'
+
+- task: AWSCLI@1
+  inputs:
+    awsCredentials: 'aws_cli'
+    regionName: 'us-east-1'
+    awsCommand: 'eks'
+    awsSubCommand: 'update-kubeconfig'
+    awsArguments: '--name $(terraform output -raw cluster_name)'
