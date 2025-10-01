@@ -45,8 +45,7 @@ steps:
   inputs:
     connectionType: 'Kubernetes Service Connection'
     kubernetesServiceEndpoint: 'KubernetesServiceConnection'
-    namespace: 'default'
     command: 'get'
-    arguments: 'pods'
+    arguments: 'nodes'
     secretType: 'dockerRegistry'
     containerRegistryType: 'Azure Container Registry'
