@@ -39,4 +39,4 @@ steps:
     regionName: 'us-east-1'
     awsCommand: 'eks'
     awsSubCommand: 'update-kubeconfig'
-    awsArguments: '--name $(terraform output -raw cluster_name)'
+    awsArguments: '--name education-eks-E5JUa2tE'
