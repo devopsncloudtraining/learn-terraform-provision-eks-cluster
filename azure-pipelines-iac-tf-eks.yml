@@ -168,10 +168,11 @@ stages:
               AWS_DEFAULT_REGION: $(awsRegion)
               
           - script: |
-              # Replace tokens in manifest files
-              find manifests/ -name "*.yaml" -exec sed -i "s|#{DOCKER_IMAGE_TAG}#|$(ecrRegistry)/$(imageRepository):$(tag)|g" {} \;
-            displayName: 'Replace tokens in manifests'
-                
+              # Replace image tag in deployment manifest
+              sed -i "s|#{DOCKER_IMAGE_TAG}#|$(ecrRegistry)/$(imageRepository):$(tag)|g" manifests/deployment.yaml
+              echo "Updated deployment manifest with image: $(ecrRegistry)/$(imageRepository):$(tag)"
+            displayName: 'Update deployment manifest with ECR image'
+            
           - task: Kubernetes@1
             displayName: 'Apply Service Account for ECR'
             inputs:
