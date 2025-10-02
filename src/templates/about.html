@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>About - Flask Static Website</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <nav>
+        <ul>
+            <li><a href="{{ url_for('home') }}">Home</a></li>
+            <li><a href="{{ url_for('about') }}">About</a></li>
+        </ul>
+    </nav>
+    
+    <div class="container">
+        <h1>About This Application</h1>
+        <p>This Flask application demonstrates a complete CI/CD pipeline with:</p>
+        
+        <div class="tech-stack">
+            <h2>Technology Stack:</h2>
+            <ul>
+                <li><strong>Backend:</strong> Python Flask</li>
+                <li><strong>Containerization:</strong> Docker</li>
+                <li><strong>Registry:</strong> Azure Container Registry</li>
+                <li><strong>Orchestration:</strong> Kubernetes on EKS</li>
+                <li><strong>Infrastructure:</strong> Terraform</li>
+                <li><strong>CI/CD:</strong> Azure DevOps Pipelines</li>
+            </ul>
+        </div>
+        
+        <div class="architecture">
+            <h2>Architecture:</h2>
+            <p>The application is deployed using a microservices architecture on AWS EKS cluster with proper ingress configuration for external access.</p>
+        </div>
+    </div>
+    
+    <footer>
+        <p>&copy; 2025 Flask Static Website on EKS</p>
+    </footer>
+</body>
+</html>
