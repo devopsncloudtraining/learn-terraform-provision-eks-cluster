@@ -122,7 +122,6 @@ stages:
     displayName: 'Deploy Flask App to EKS'
     pool:
       vmImage: ubuntu-latest
-    environment: 'production'
     strategy:
       runOnce:
         deploy:
@@ -168,24 +167,10 @@ stages:
             env:
               AWS_DEFAULT_REGION: $(awsRegion)
               
-          - task: replacetokens@5
+          - script: |
+              # Replace tokens in manifest files
+              find manifests/ -name "*.yaml" -exec sed -i "s|#{DOCKER_IMAGE_TAG}#|$(ecrRegistry)/$(imageRepository):$(tag)|g" {} \;
             displayName: 'Replace tokens in manifests'
-            inputs:
-              rootDirectory: 'manifests'
-              targetFiles: '**/*.yaml'
-              encoding: 'auto'
-              tokenPattern: 'custom'
-              tokenPrefix: '#{'
-              tokenSuffix: '}#'
-              writeBOM: true
-              actionOnMissing: 'warn'
-              keepToken: false
-              actionOnNoFiles: 'continue'
-              enableTransforms: false
-              useLegacyPattern: false
-              enableTelemetry: true
-              variables: |
-                DOCKER_IMAGE_TAG=$(ecrRegistry)/$(imageRepository):$(tag)
                 
           - task: Kubernetes@1
             displayName: 'Apply Service Account for ECR'
