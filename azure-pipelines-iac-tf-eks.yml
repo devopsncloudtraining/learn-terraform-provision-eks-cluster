@@ -8,7 +8,7 @@ variables:
   # Build variables
   awsECRServiceConnection: 'aws-ecr-connection'
   imageRepository: 'flask-static-app'
-  ecrRegistry: '851725259254.dkr.ecr.us-east-1.amazonaws.com' # Replace with your ECR URI
+  ecrRegistry: '112779685052.dkr.ecr.us-east-1.amazonaws.com' # Your actual ECR URI
   dockerfilePath: 'src/Dockerfile'
   tag: '$(Build.BuildId)'
   imagePullPolicy: 'Always'
@@ -147,7 +147,7 @@ stages:
               awsSubCommand: 'get-login-password'
               awsArguments: '--region $(awsRegion)'
             env:
-              AWS_ACCOUNT_ID: '851725259254' # Your actual AWS Account ID
+              AWS_ACCOUNT_ID: '112779685052' # Your actual AWS Account ID
               
           - script: |
               # Create ECR registry secret
