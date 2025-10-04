@@ -138,12 +138,20 @@ stages:
       displayName: 'Install Terraform'
       inputs:
         terraformVersion: $(terraformVersion)
+        
+    - task: TerraformTask@5
+      displayName: 'Initialize Terraform with AWS Credentials'
+      inputs:
+        provider: 'aws'
+        command: 'init'
+        backendServiceAWS: $(awsServiceConnection)
+        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks'
+        backendAWSKey: 'terraform.tfstate'
       
     - script: |
         echo "Debug: EKS_CLUSTER_NAME variable value: '$(EKS_CLUSTER_NAME)'"
         
-        # Initialize Terraform and get cluster name
-        terraform init -backend-config="bucket=tf-state-file-4-az-pipeline-eks" -backend-config="key=terraform.tfstate" -backend-config="region=$(awsRegion)"
+        # Get cluster name from Terraform output
         CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
         
         if [ -z "$CLUSTER_NAME" ]; then
@@ -162,19 +170,24 @@ stages:
         echo "Retrieved cluster name: $CLUSTER_NAME"
         echo "##vso[task.setvariable variable=CLUSTER_NAME]$CLUSTER_NAME"
         
-        # Update kubeconfig with the cluster name
-        echo "Updating kubeconfig for cluster: $CLUSTER_NAME"
-        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region $(awsRegion)
+      displayName: 'Get Cluster Name from Terraform'
         
+    - task: AWSCLI@1
+      displayName: 'Update Kubeconfig with Dynamic Cluster Name'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'eks'
+        awsSubCommand: 'update-kubeconfig'
+        awsArguments: '--name $(CLUSTER_NAME)'
+        
+    - script: |
         # Verify connectivity
         echo "Testing kubectl connectivity..."
         kubectl cluster-info
         echo "Getting cluster nodes..."
         kubectl get nodes --timeout=30s || echo "Warning: Could not get nodes, but continuing..."
-        
-      displayName: 'Get Cluster Name and Update Kubeconfig'
-      env:
-        AWS_DEFAULT_REGION: $(awsRegion)
+      displayName: 'Verify Kubernetes Connectivity'
         
     - task: AWSCLI@1
       displayName: 'Setup ECR Secret for Kubernetes'
