@@ -108,33 +108,6 @@ stages:
       displayName: 'ECR Login, Build and Push Docker Image'
       env:
         AWS_DEFAULT_REGION: $(awsRegion)
-      
-    - task: AWSCLI@1
-      displayName: 'Get ECR Login Token'
-      inputs:
-        awsCredentials: 'aws_cli'
-        regionName: $(awsRegion)
-        awsCommand: 'ecr'
-        awsSubCommand: 'get-login-password'
-        awsArguments: '--region $(awsRegion)'
-        
-    - script: |
-        # Get ECR login token and login to Docker
-        ECR_TOKEN=$(aws ecr get-login-password --region $(awsRegion))
-        echo $ECR_TOKEN | docker login --username AWS --password-stdin $(ecrRegistry)
-        echo "Successfully logged into ECR: $(ecrRegistry)"
-        
-        # Build the Docker image
-        docker build -t $(ecrRegistry)/$(imageRepository):$(tag) -t $(ecrRegistry)/$(imageRepository):latest src/
-        
-        # Push both tags
-        docker push $(ecrRegistry)/$(imageRepository):$(tag)
-        docker push $(ecrRegistry)/$(imageRepository):latest
-        
-        echo "Successfully pushed images to ECR"
-      displayName: 'Login, Build and Push to ECR'
-      env:
-        AWS_DEFAULT_REGION: $(awsRegion)
 
 - stage: Deploy
   displayName: 'Deploy to EKS'
@@ -202,32 +175,30 @@ stages:
         awsSubCommand: 'update-kubeconfig'
         awsArguments: '--name $(CLUSTER_NAME)'
         
-    - script: |
-        # Verify connectivity
-        echo "Testing kubectl connectivity..."
-        kubectl cluster-info
-        echo "Getting cluster nodes..."
-        kubectl get nodes --request-timeout=30s || echo "Warning: Could not get nodes, but continuing..."
+    - task: Kubernetes@1
       displayName: 'Verify Kubernetes Connectivity'
-      env:
-        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
-        AWS_DEFAULT_REGION: $(awsRegion)
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'get'
+        arguments: 'nodes'
         
     - task: AWSCLI@1
-      displayName: 'Setup ECR Secret for Kubernetes'
+      displayName: 'Get ECR Login Token'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
         awsCommand: 'ecr'
         awsSubCommand: 'get-login-password'
         awsArguments: '--region $(awsRegion)'
-      env:
-        AWS_ACCOUNT_ID: '112779685052' # Your actual AWS Account ID
-        
+      
     - script: |
-        # Create ECR registry secret
+        # Create ECR registry secret using current kubeconfig context
+        echo "Creating ECR registry secret..."
         TOKEN=$(aws ecr get-login-password --region $(awsRegion))
+        
+        # Use the kubeconfig context that was set up by the kubernetesServiceConnection
         kubectl create secret docker-registry ecr-registry-secret \
           --namespace=default \
           --docker-server=$(ecrRegistry) \
@@ -235,15 +206,19 @@ stages:
           --docker-password=$TOKEN \
           --dry-run=client -o yaml | kubectl apply -f -
         
-        # Update service account to use the secret
-        kubectl patch serviceaccount deploy-robot \
-          -p '{"imagePullSecrets": [{"name": "ecr-registry-secret"}]}' \
-          --namespace=default || echo "Service account patch skipped"
+        echo "ECR registry secret created successfully"
       displayName: 'Create ECR Registry Secret'
       env:
-        AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
-        AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
         AWS_DEFAULT_REGION: $(awsRegion)
+        
+    - task: Kubernetes@1
+      displayName: 'Patch Service Account with Image Pull Secret'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'patch'
+        arguments: 'serviceaccount deploy-robot -p "{\"imagePullSecrets\": [{\"name\": \"ecr-registry-secret\"}]}" --type=merge'
         
     - script: |
         # Replace image tag in deployment manifest
