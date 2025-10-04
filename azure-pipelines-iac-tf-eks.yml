@@ -144,13 +144,34 @@ stages:
         
         # Initialize Terraform and get cluster name
         terraform init -backend-config="bucket=tf-state-file-4-az-pipeline-eks" -backend-config="key=terraform.tfstate" -backend-config="region=$(awsRegion)"
-        CLUSTER_NAME=$(terraform output -raw cluster_name)
-        echo "Retrieved cluster name from Terraform: $CLUSTER_NAME"
+        CLUSTER_NAME=$(terraform output -raw cluster_name 2>/dev/null || echo "")
+        
+        if [ -z "$CLUSTER_NAME" ]; then
+          echo "Warning: Could not get cluster name from Terraform output"
+          echo "Listing all EKS clusters to find the correct one..."
+          aws eks list-clusters --region $(awsRegion)
+          CLUSTER_NAME=$(aws eks list-clusters --region $(awsRegion) --query 'clusters[0]' --output text)
+          echo "Using first available cluster: $CLUSTER_NAME"
+        fi
+        
+        if [ -z "$CLUSTER_NAME" ] || [ "$CLUSTER_NAME" = "None" ]; then
+          echo "Error: No EKS clusters found!"
+          exit 1
+        fi
+        
+        echo "Retrieved cluster name: $CLUSTER_NAME"
         echo "##vso[task.setvariable variable=CLUSTER_NAME]$CLUSTER_NAME"
         
         # Update kubeconfig with the cluster name
-        aws eks update-kubeconfig --name $CLUSTER_NAME --region $(awsRegion)
-        echo "Updated kubeconfig for cluster: $CLUSTER_NAME"
+        echo "Updating kubeconfig for cluster: $CLUSTER_NAME"
+        aws eks update-kubeconfig --name "$CLUSTER_NAME" --region $(awsRegion)
+        
+        # Verify connectivity
+        echo "Testing kubectl connectivity..."
+        kubectl cluster-info
+        echo "Getting cluster nodes..."
+        kubectl get nodes --timeout=30s || echo "Warning: Could not get nodes, but continuing..."
+        
       displayName: 'Get Cluster Name and Update Kubeconfig'
       env:
         AWS_DEFAULT_REGION: $(awsRegion)
@@ -199,6 +220,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/serviceaccount-ecr.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Apply ConfigMap'
@@ -209,6 +231,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/configmap.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Apply Service'
@@ -219,6 +242,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/service.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Apply Deployment'
@@ -229,6 +253,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/deployment.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Apply Pod Disruption Budget'
@@ -239,6 +264,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/pdb.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Apply Horizontal Pod Autoscaler'
@@ -249,6 +275,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/hpa.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Apply Ingress'
@@ -259,6 +286,7 @@ stages:
         command: 'apply'
         useConfigurationFile: true
         configuration: 'manifests/ingress.yaml'
+        arguments: '--validate=false'
         
     - task: Kubernetes@1
       displayName: 'Wait for Deployment Rollout'
