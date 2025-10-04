@@ -63,38 +63,48 @@ stages:
         environmentServiceNameAWS: $(awsServiceConnection)
         
     - script: |
-        # First, check what EKS clusters actually exist
-        echo "=== Checking available EKS clusters ==="
-        aws eks list-clusters --region $(awsRegion) --output table
+            - task: TerraformInstaller@1
+      displayName: 'Install Terraform for Deploy Stage'
+      inputs:
+        terraformVersion: $(terraformVersion)
         
-        # Get the first available cluster name
-        AVAILABLE_CLUSTERS=$(aws eks list-clusters --region $(awsRegion) --query 'clusters[0]' --output text)
-        echo "First available cluster: $AVAILABLE_CLUSTERS"
+    - task: TerraformTask@5
+      displayName: 'Terraform Init for Cluster Name'
+      inputs:
+        provider: 'aws'
+        command: 'init'
+        backendServiceAWS: $(awsServiceConnection)
+        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks'
+        backendAWSKey: 'terraform.tfstate'
         
-        if [ "$AVAILABLE_CLUSTERS" = "None" ] || [ -z "$AVAILABLE_CLUSTERS" ]; then
-          echo "ERROR: No EKS clusters found in region $(awsRegion)"
-          echo "Please check if the Terraform infrastructure stage created the cluster successfully"
+    - script: |
+        # Get cluster name from Terraform output
+        echo "=== Getting cluster name from Terraform output ==="
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        
+        if [ -n "$CLUSTER_NAME" ]; then
+          echo "Found cluster name: $CLUSTER_NAME"
+          echo "##vso[task.setvariable variable=EKS_CLUSTER_NAME]$CLUSTER_NAME"
+        else
+          echo "ERROR: Could not get cluster name from Terraform output"
           exit 1
         fi
+      displayName: 'Get Cluster Name from Terraform'
+      
+    - task: AWSCLI@1
+      displayName: 'Update Kubeconfig'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'eks'
+        awsSubCommand: 'update-kubeconfig'
+        awsArguments: '--name $(EKS_CLUSTER_NAME)'
         
-        # Use the available cluster
-        EKS_CLUSTER_NAME="$AVAILABLE_CLUSTERS"
-        echo "Using cluster: $EKS_CLUSTER_NAME"
-        
-        # Update kubeconfig with the correct cluster
-        echo "=== Updating kubeconfig ==="
-        aws eks update-kubeconfig --region $(awsRegion) --name "$EKS_CLUSTER_NAME"
-        
-        # Test cluster connectivity
-        echo "=== Testing cluster connectivity ==="
-        kubectl cluster-info || echo "Warning: Cluster info failed, but continuing..."
-        kubectl get nodes --timeout=30s || echo "Warning: Cannot get nodes, but continuing..."
-        
-        # Export cluster name for subsequent steps
-        echo "##vso[task.setvariable variable=CLUSTER_NAME]$EKS_CLUSTER_NAME"
-      displayName: 'Debug EKS Clusters and Update Kubeconfig'
-      env:
-        AWS_DEFAULT_REGION: $(awsRegion)
+    - script: |
+        echo "Testing cluster connectivity..."
+        kubectl cluster-info || echo "Warning: Cluster info failed"
+        kubectl get nodes --timeout=30s || echo "Warning: Cannot get nodes yet"
+      displayName: 'Test Kubernetes Connectivity'
 
 - stage: Build
   displayName: 'Build and Push Docker Image'
