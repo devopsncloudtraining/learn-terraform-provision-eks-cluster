@@ -118,154 +118,151 @@ stages:
   dependsOn: Build
   condition: succeeded()
   jobs:
-  - deployment: DeployToEKS
+  - job: DeployToEKS
     displayName: 'Deploy Flask App to EKS'
     pool:
       vmImage: ubuntu-latest
-    strategy:
-      runOnce:
-        deploy:
-          steps:
-          - checkout: self
-            displayName: 'Checkout source code'
-            
-          - task: AWSCLI@1
-            displayName: 'Update Kubeconfig for Deployment'
-            inputs:
-              awsCredentials: 'aws_cli'
-              regionName: $(awsRegion)
-              awsCommand: 'eks'
-              awsSubCommand: 'update-kubeconfig'
-              awsArguments: '--name education-eks-E5JUa2tE'
-              
-          - task: AWSCLI@1
-            displayName: 'Setup ECR Secret for Kubernetes'
-            inputs:
-              awsCredentials: 'aws_cli'
-              regionName: $(awsRegion)
-              awsCommand: 'ecr'
-              awsSubCommand: 'get-login-password'
-              awsArguments: '--region $(awsRegion)'
-            env:
-              AWS_ACCOUNT_ID: '112779685052' # Your actual AWS Account ID
-              
-          - script: |
-              # Create ECR registry secret
-              TOKEN=$(aws ecr get-login-password --region $(awsRegion))
-              kubectl create secret docker-registry ecr-registry-secret \
-                --namespace=default \
-                --docker-server=$(ecrRegistry) \
-                --docker-username=AWS \
-                --docker-password=$TOKEN \
-                --dry-run=client -o yaml | kubectl apply -f -
-              
-              # Update service account to use the secret
-              kubectl patch serviceaccount deploy-robot \
-                -p '{"imagePullSecrets": [{"name": "ecr-registry-secret"}]}' \
-                --namespace=default || echo "Service account patch skipped"
-            displayName: 'Create ECR Registry Secret'
-            env:
-              AWS_DEFAULT_REGION: $(awsRegion)
-              
-          - script: |
-              # Replace image tag in deployment manifest
-              sed -i "s|#{DOCKER_IMAGE_TAG}#|$(ecrRegistry)/$(imageRepository):$(tag)|g" manifests/deployment.yaml
-              echo "Updated deployment manifest with image: $(ecrRegistry)/$(imageRepository):$(tag)"
-            displayName: 'Update deployment manifest with ECR image'
-            
-          - task: Kubernetes@1
-            displayName: 'Apply Service Account for ECR'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/serviceaccount-ecr.yaml'
-                
-          - task: Kubernetes@1
-            displayName: 'Apply ConfigMap'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/configmap.yaml'
-              
-          - task: Kubernetes@1
-            displayName: 'Apply Service'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/service.yaml'
-              
-          - task: Kubernetes@1
-            displayName: 'Apply Deployment'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/deployment.yaml'
-              
-          - task: Kubernetes@1
-            displayName: 'Apply Pod Disruption Budget'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/pdb.yaml'
-              
-          - task: Kubernetes@1
-            displayName: 'Apply Horizontal Pod Autoscaler'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/hpa.yaml'
-              
-          - task: Kubernetes@1
-            displayName: 'Apply Ingress'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'apply'
-              useConfigurationFile: true
-              configuration: 'manifests/ingress.yaml'
-              
-          - task: Kubernetes@1
-            displayName: 'Wait for Deployment Rollout'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'rollout'
-              arguments: 'status deployment/flask-app-deployment --timeout=300s'
-              
-          - task: Kubernetes@1
-            displayName: 'Get Application Status'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'get'
-              arguments: 'pods,svc,ingress -l app=flask-app'
-              
-          - task: Kubernetes@1
-            displayName: 'Get Ingress URL'
-            inputs:
-              connectionType: 'Kubernetes Service Connection'
-              kubernetesServiceEndpoint: $(kubernetesServiceConnection)
-              namespace: $(namespace)
-              command: 'get'
-              arguments: 'ingress flask-app-ingress -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"'
+    steps:
+    - checkout: self
+      displayName: 'Checkout source code'
+      
+    - task: AWSCLI@1
+      displayName: 'Update Kubeconfig for Deployment'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'eks'
+        awsSubCommand: 'update-kubeconfig'
+        awsArguments: '--name education-eks-E5JUa2tE'
+        
+    - task: AWSCLI@1
+      displayName: 'Setup ECR Secret for Kubernetes'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'get-login-password'
+        awsArguments: '--region $(awsRegion)'
+      env:
+        AWS_ACCOUNT_ID: '112779685052' # Your actual AWS Account ID
+        
+    - script: |
+        # Create ECR registry secret
+        TOKEN=$(aws ecr get-login-password --region $(awsRegion))
+        kubectl create secret docker-registry ecr-registry-secret \
+          --namespace=default \
+          --docker-server=$(ecrRegistry) \
+          --docker-username=AWS \
+          --docker-password=$TOKEN \
+          --dry-run=client -o yaml | kubectl apply -f -
+        
+        # Update service account to use the secret
+        kubectl patch serviceaccount deploy-robot \
+          -p '{"imagePullSecrets": [{"name": "ecr-registry-secret"}]}' \
+          --namespace=default || echo "Service account patch skipped"
+      displayName: 'Create ECR Registry Secret'
+      env:
+        AWS_DEFAULT_REGION: $(awsRegion)
+        
+    - script: |
+        # Replace image tag in deployment manifest
+        sed -i "s|#{DOCKER_IMAGE_TAG}#|$(ecrRegistry)/$(imageRepository):$(tag)|g" manifests/deployment.yaml
+        echo "Updated deployment manifest with image: $(ecrRegistry)/$(imageRepository):$(tag)"
+      displayName: 'Update deployment manifest with ECR image'
+      
+    - task: Kubernetes@1
+      displayName: 'Apply Service Account for ECR'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/serviceaccount-ecr.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Apply ConfigMap'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/configmap.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Apply Service'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/service.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Apply Deployment'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/deployment.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Apply Pod Disruption Budget'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/pdb.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Apply Horizontal Pod Autoscaler'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/hpa.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Apply Ingress'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'apply'
+        useConfigurationFile: true
+        configuration: 'manifests/ingress.yaml'
+        
+    - task: Kubernetes@1
+      displayName: 'Wait for Deployment Rollout'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'rollout'
+        arguments: 'status deployment/flask-app-deployment --timeout=300s'
+        
+    - task: Kubernetes@1
+      displayName: 'Get Application Status'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'get'
+        arguments: 'pods,svc,ingress -l app=flask-app'
+        
+    - task: Kubernetes@1
+      displayName: 'Get Ingress URL'
+      inputs:
+        connectionType: 'Kubernetes Service Connection'
+        kubernetesServiceEndpoint: $(kubernetesServiceConnection)
+        namespace: $(namespace)
+        command: 'get'
+        arguments: 'ingress flask-app-ingress -o jsonpath="{.status.loadBalancer.ingress[0].hostname}"'
