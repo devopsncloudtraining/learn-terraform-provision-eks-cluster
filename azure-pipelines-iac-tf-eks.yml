@@ -125,8 +125,6 @@ stages:
   - Infrastructure
   - Build
   condition: succeeded()
-  variables:
-    EKS_CLUSTER_NAME: $[ stageDependencies.Infrastructure.TerraformDeploy.outputs['getClusterName.EKS_CLUSTER_NAME'] ]
   jobs:
   - job: DeployToEKS
     displayName: 'Deploy Flask App to EKS'
@@ -141,38 +139,21 @@ stages:
       inputs:
         terraformVersion: $(terraformVersion)
       
-    - task: TerraformTask@5
-      displayName: 'Initialize Terraform for Outputs'
-      condition: eq(variables['EKS_CLUSTER_NAME'], '')
-      inputs:
-        provider: 'aws'
-        command: 'init'
-        backendServiceAWS: $(awsServiceConnection)
-        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks'
-        backendAWSKey: 'terraform.tfstate'
-        
     - script: |
         echo "Debug: EKS_CLUSTER_NAME variable value: '$(EKS_CLUSTER_NAME)'"
         
-        # If cluster name is empty, try to get it from Terraform output directly
-        if [ -z "$(EKS_CLUSTER_NAME)" ]; then
-          echo "EKS_CLUSTER_NAME is empty, getting from Terraform output..."
-          CLUSTER_NAME=$(terraform output -raw cluster_name)
-          echo "##vso[task.setvariable variable=EKS_CLUSTER_NAME]$CLUSTER_NAME"
-          echo "Retrieved cluster name from Terraform: $CLUSTER_NAME"
-        else
-          echo "Using EKS_CLUSTER_NAME from stage dependency: $(EKS_CLUSTER_NAME)"
-        fi
-      displayName: 'Debug and Get Cluster Name'
-      
-    - task: AWSCLI@1
-      displayName: 'Update Kubeconfig for Deployment'
-      inputs:
-        awsCredentials: 'aws_cli'
-        regionName: $(awsRegion)
-        awsCommand: 'eks'
-        awsSubCommand: 'update-kubeconfig'
-        awsArguments: '--name $(EKS_CLUSTER_NAME)'
+        # Initialize Terraform and get cluster name
+        terraform init -backend-config="bucket=tf-state-file-4-az-pipeline-eks" -backend-config="key=terraform.tfstate" -backend-config="region=$(awsRegion)"
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        echo "Retrieved cluster name from Terraform: $CLUSTER_NAME"
+        echo "##vso[task.setvariable variable=CLUSTER_NAME]$CLUSTER_NAME"
+        
+        # Update kubeconfig with the cluster name
+        aws eks update-kubeconfig --name $CLUSTER_NAME --region $(awsRegion)
+        echo "Updated kubeconfig for cluster: $CLUSTER_NAME"
+      displayName: 'Get Cluster Name and Update Kubeconfig'
+      env:
+        AWS_DEFAULT_REGION: $(awsRegion)
         
     - task: AWSCLI@1
       displayName: 'Setup ECR Secret for Kubernetes'
