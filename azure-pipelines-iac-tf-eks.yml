@@ -93,13 +93,22 @@ stages:
       displayName: 'Checkout source code'
       
     - task: AWSCLI@1
-      displayName: 'Login to AWS ECR'
+      displayName: 'Get ECR Login Token'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
         awsCommand: 'ecr'
         awsSubCommand: 'get-login-password'
-        awsArguments: '--region $(awsRegion) | docker login --username AWS --password-stdin $(ecrRegistry)'
+        awsArguments: '--region $(awsRegion)'
+        
+    - script: |
+        # Get ECR login token and login to Docker
+        ECR_TOKEN=$(aws ecr get-login-password --region $(awsRegion))
+        echo $ECR_TOKEN | docker login --username AWS --password-stdin $(ecrRegistry)
+        echo "Successfully logged into ECR: $(ecrRegistry)"
+      displayName: 'Login to Docker with ECR Token'
+      env:
+        AWS_DEFAULT_REGION: $(awsRegion)
         
     - task: Docker@2
       displayName: 'Build Flask Docker Image'
