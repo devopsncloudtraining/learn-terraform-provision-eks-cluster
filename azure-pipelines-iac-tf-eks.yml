@@ -78,6 +78,74 @@ stages:
         awsCommand: 'eks'
         awsSubCommand: 'update-kubeconfig'
         awsArguments: '--name $(getClusterName.EKS_CLUSTER_NAME)'
+        
+    - task: AWSCLI@1
+      displayName: 'Setup AWS Environment for ECR'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'sts'
+        awsSubCommand: 'get-caller-identity'
+        
+    - script: |
+        echo "=== Setting up ECR Repository: $(imageRepository) ==="
+        
+        # Check if repository exists
+        if aws ecr describe-repositories --repository-names $(imageRepository) --region $(awsRegion) 2>/dev/null; then
+          echo "✅ ECR repository '$(imageRepository)' already exists"
+        else
+          echo "📦 Creating ECR repository '$(imageRepository)'..."
+          aws ecr create-repository \
+            --repository-name $(imageRepository) \
+            --region $(awsRegion) \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+          echo "✅ ECR repository '$(imageRepository)' created successfully"
+        fi
+        
+        # Set lifecycle policy to manage image retention
+        echo "🔄 Setting lifecycle policy..."
+        aws ecr put-lifecycle-policy \
+          --repository-name $(imageRepository) \
+          --region $(awsRegion) \
+          --lifecycle-policy-text '{
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Keep last 10 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 10
+                },
+                "action": {
+                  "type": "expire"
+                }
+              }
+            ]
+          }' || echo "⚠️ Lifecycle policy already exists or failed to set"
+        
+        # Get and display repository URI
+        REPO_URI=$(aws ecr describe-repositories \
+          --repository-names $(imageRepository) \
+          --region $(awsRegion) \
+          --query 'repositories[0].repositoryUri' \
+          --output text)
+        
+        echo "📍 ECR Repository URI: $REPO_URI"
+        echo "##vso[task.setvariable variable=ECR_REPOSITORY_URI]$REPO_URI"
+        
+        # Verify the URI matches our expected format
+        EXPECTED_URI="$(ecrRegistry)/$(imageRepository)"
+        if [ "$REPO_URI" = "$EXPECTED_URI" ]; then
+          echo "✅ Repository URI matches expected format"
+        else
+          echo "⚠️ Warning: Repository URI ($REPO_URI) differs from expected ($EXPECTED_URI)"
+        fi
+        
+      displayName: 'Setup ECR Repository'
+      env:
+        AWS_DEFAULT_REGION: $(awsRegion)
 
 - stage: Build
   displayName: 'Build and Push Docker Image'
@@ -92,6 +160,14 @@ stages:
     - checkout: self
       displayName: 'Checkout source code'
       
+    - task: AWSCLI@1
+      displayName: 'Setup AWS Environment for Build'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'sts'
+        awsSubCommand: 'get-caller-identity'
+      
     - script: |
         # ECR Login, Build and Push combined
         echo "=== Logging into ECR ==="
@@ -105,6 +181,11 @@ stages:
         docker push $(ecrRegistry)/$(imageRepository):latest
         
         echo "Successfully built and pushed: $(ecrRegistry)/$(imageRepository):$(tag)"
+        
+        # Verify the image was pushed successfully
+        echo "=== Verifying images in ECR ==="
+        aws ecr list-images --repository-name $(imageRepository) --region $(awsRegion)
+        
       displayName: 'ECR Login, Build and Push Docker Image'
       env:
         AWS_DEFAULT_REGION: $(awsRegion)
