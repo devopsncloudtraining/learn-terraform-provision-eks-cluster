@@ -80,72 +80,42 @@ stages:
         awsArguments: '--name $(getClusterName.EKS_CLUSTER_NAME)'
         
     - task: AWSCLI@1
-      displayName: 'Setup AWS Environment for ECR'
+      displayName: 'Setup ECR Repository'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
-        awsCommand: 'sts'
-        awsSubCommand: 'get-caller-identity'
+        awsCommand: 'ecr'
+        awsSubCommand: 'describe-repositories'
+        awsArguments: '--repository-names $(imageRepository) || echo "Repository does not exist, will create"'
         
-    - script: |
-        echo "=== Setting up ECR Repository: $(imageRepository) ==="
-        
-        # Check if repository exists
-        if aws ecr describe-repositories --repository-names $(imageRepository) --region $(awsRegion) 2>/dev/null; then
-          echo "✅ ECR repository '$(imageRepository)' already exists"
-        else
-          echo "📦 Creating ECR repository '$(imageRepository)'..."
-          aws ecr create-repository \
-            --repository-name $(imageRepository) \
-            --region $(awsRegion) \
-            --image-scanning-configuration scanOnPush=true \
-            --encryption-configuration encryptionType=AES256
-          echo "✅ ECR repository '$(imageRepository)' created successfully"
-        fi
-        
-        # Set lifecycle policy to manage image retention
-        echo "🔄 Setting lifecycle policy..."
-        aws ecr put-lifecycle-policy \
-          --repository-name $(imageRepository) \
-          --region $(awsRegion) \
-          --lifecycle-policy-text '{
-            "rules": [
-              {
-                "rulePriority": 1,
-                "description": "Keep last 10 images",
-                "selection": {
-                  "tagStatus": "any",
-                  "countType": "imageCountMoreThan",
-                  "countNumber": 10
-                },
-                "action": {
-                  "type": "expire"
-                }
-              }
-            ]
-          }' || echo "⚠️ Lifecycle policy already exists or failed to set"
-        
-        # Get and display repository URI
-        REPO_URI=$(aws ecr describe-repositories \
-          --repository-names $(imageRepository) \
-          --region $(awsRegion) \
-          --query 'repositories[0].repositoryUri' \
-          --output text)
-        
-        echo "📍 ECR Repository URI: $REPO_URI"
-        echo "##vso[task.setvariable variable=ECR_REPOSITORY_URI]$REPO_URI"
-        
-        # Verify the URI matches our expected format
-        EXPECTED_URI="$(ecrRegistry)/$(imageRepository)"
-        if [ "$REPO_URI" = "$EXPECTED_URI" ]; then
-          echo "✅ Repository URI matches expected format"
-        else
-          echo "⚠️ Warning: Repository URI ($REPO_URI) differs from expected ($EXPECTED_URI)"
-        fi
-        
-      displayName: 'Setup ECR Repository'
-      env:
-        AWS_DEFAULT_REGION: $(awsRegion)
+    - task: AWSCLI@1
+      displayName: 'Create ECR Repository if not exists'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'create-repository'
+        awsArguments: '--repository-name $(imageRepository) --image-scanning-configuration scanOnPush=true --encryption-configuration encryptionType=AES256'
+      continueOnError: true
+      
+    - task: AWSCLI@1
+      displayName: 'Set ECR Lifecycle Policy'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'put-lifecycle-policy'
+        awsArguments: '--repository-name $(imageRepository) --lifecycle-policy-text "{\"rules\":[{\"rulePriority\":1,\"description\":\"Keep last 10 images\",\"selection\":{\"tagStatus\":\"any\",\"countType\":\"imageCountMoreThan\",\"countNumber\":10},\"action\":{\"type\":\"expire\"}}]}"'
+      continueOnError: true
+      
+    - task: AWSCLI@1
+      displayName: 'Verify ECR Repository'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'describe-repositories'
+        awsArguments: '--repository-names $(imageRepository) --query "repositories[0].repositoryUri" --output text'
 
 - stage: Build
   displayName: 'Build and Push Docker Image'
@@ -168,10 +138,21 @@ stages:
         awsCommand: 'sts'
         awsSubCommand: 'get-caller-identity'
       
+    - task: AWSCLI@1
+      displayName: 'Get ECR Login Token'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'get-login-password'
+        awsArguments: '--region $(awsRegion)'
+      name: getECRToken
+        
     - script: |
-        # ECR Login, Build and Push combined
         echo "=== Logging into ECR ==="
-        aws ecr get-login-password --region $(awsRegion) | docker login --username AWS --password-stdin $(ecrRegistry)
+        # Get ECR login token and login to Docker
+        ECR_TOKEN=$(aws ecr get-login-password --region $(awsRegion))
+        echo $ECR_TOKEN | docker login --username AWS --password-stdin $(ecrRegistry)
         
         echo "=== Building Docker image ==="
         docker build -t $(ecrRegistry)/$(imageRepository):$(tag) -t $(ecrRegistry)/$(imageRepository):latest -f $(dockerfilePath) src/
@@ -182,13 +163,18 @@ stages:
         
         echo "Successfully built and pushed: $(ecrRegistry)/$(imageRepository):$(tag)"
         
-        # Verify the image was pushed successfully
-        echo "=== Verifying images in ECR ==="
-        aws ecr list-images --repository-name $(imageRepository) --region $(awsRegion)
-        
       displayName: 'ECR Login, Build and Push Docker Image'
       env:
         AWS_DEFAULT_REGION: $(awsRegion)
+      
+    - task: AWSCLI@1
+      displayName: 'Verify Images in ECR'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'list-images'
+        awsArguments: '--repository-name $(imageRepository)'
 
 - stage: Deploy
   displayName: 'Deploy to EKS'
