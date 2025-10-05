@@ -181,105 +181,46 @@ stages:
         
       displayName: 'Build Docker Image'
     
-    - script: |
-        echo "=== Build Configuration ==="
-        echo "AWS Region: $(awsRegion)"
-        echo "ECR Registry: $(ecrRegistry)"
-        echo "Image Repository: $(imageRepository)"
-        echo "Build Tag: $(tag)"
-        echo "Dockerfile Path: $(dockerfilePath)"
-        
-        echo "=== Verifying Dockerfile exists ==="
-        if [ -f "$(dockerfilePath)" ]; then
-          echo "✅ Dockerfile found at $(dockerfilePath)"
-        else
-          echo "❌ Dockerfile not found at $(dockerfilePath)"
-          ls -la src/
-          exit 1
-        fi
-        
-      displayName: 'Verify Build Configuration'
-    
-    - task: Docker@2
-      displayName: 'Build Flask Application Image'
-      inputs:
-        command: 'build'
-        Dockerfile: '$(dockerfilePath)'
-        buildContext: 'src'
-        repository: '$(imageRepository)'
-        tags: |
-          $(tag)
-          latest
-    
-    - task: AWSCLI@1
-      displayName: 'Setup AWS Credentials'
+    - task: AWSShellScript@1
+      displayName: 'Build and Push Docker Image to ECR'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
-        awsCommand: 'sts'
-        awsSubCommand: 'get-caller-identity'
-        
-    - script: |
-        echo "=== ECR Authentication and Push ==="
-        
-        # Get ECR login token
-        echo "Getting ECR authentication token..."
-        ECR_PASSWORD=$(aws ecr get-login-password --region $(awsRegion) 2>&1)
-        
-        if [ $? -ne 0 ]; then
-          echo "❌ Failed to get ECR token"
-          echo "Error: $ECR_PASSWORD"
-          exit 1
-        fi
-        
-        echo "✅ ECR token retrieved successfully"
-        
-        # Login to ECR
-        echo "Logging into ECR..."
-        echo "$ECR_PASSWORD" | docker login --username AWS --password-stdin $(ecrRegistry)
-        
-        if [ $? -eq 0 ]; then
-          echo "✅ Successfully logged into ECR"
-        else
-          echo "❌ Failed to login to ECR"
-          exit 1
-        fi
-        
-        # Tag images for ECR
-        echo "=== Tagging images for ECR ==="
-        docker tag $(imageRepository):$(tag) $(ecrRegistry)/$(imageRepository):$(tag)
-        docker tag $(imageRepository):latest $(ecrRegistry)/$(imageRepository):latest
-        
-        echo "Tagged images:"
-        docker images | grep $(imageRepository)
-        
-        # Push images
-        echo "=== Pushing images to ECR ==="
-        echo "Pushing $(tag) image..."
-        docker push $(ecrRegistry)/$(imageRepository):$(tag)
-        
-        if [ $? -eq 0 ]; then
-          echo "✅ Successfully pushed $(tag) image"
-        else
-          echo "❌ Failed to push $(tag) image"
-          exit 1
-        fi
-        
-        echo "Pushing latest image..."
-        docker push $(ecrRegistry)/$(imageRepository):latest
-        
-        if [ $? -eq 0 ]; then
-          echo "✅ Successfully pushed latest image"
-        else
-          echo "❌ Failed to push latest image"
-          exit 1
-        fi
-        
-        echo "🎉 Successfully pushed all images to ECR!"
-        
-      displayName: 'ECR Login and Push Images'
-      env:
-        AWS_DEFAULT_REGION: $(awsRegion)
+        scriptType: 'inline'
+        inlineScript: |
+          set -euo pipefail
+
+          echo "=== Build Configuration ==="
+          echo "AWS Region: $(awsRegion)"
+          echo "ECR Registry: $(ecrRegistry)"
+          echo "Image Repository: $(imageRepository)"
+          echo "Build Tag: $(tag)"
+          echo "Dockerfile Path: $(dockerfilePath)"
+
+          echo "=== Verifying Dockerfile exists ==="
+          if [ -f "$(dockerfilePath)" ]; then
+            echo "✅ Dockerfile found at $(dockerfilePath)"
+          else
+            echo "❌ Dockerfile not found at $(dockerfilePath)"
+            ls -la src/
+            exit 1
+          fi
+
+          echo "=== Building Docker image ==="
+          docker build -t $(imageRepository):$(tag) -t $(imageRepository):latest -f $(dockerfilePath) src/
+
+          echo "=== Authenticating to ECR ==="
+          aws ecr get-login-password --region $(awsRegion) | docker login --username AWS --password-stdin $(ecrRegistry)
+
+          echo "=== Tagging images for ECR ==="
+          docker tag $(imageRepository):$(tag) $(ecrRegistry)/$(imageRepository):$(tag)
+          docker tag $(imageRepository):latest $(ecrRegistry)/$(imageRepository):latest
+
+          echo "=== Pushing images to ECR ==="
+          docker push $(ecrRegistry)/$(imageRepository):$(tag)
+          docker push $(ecrRegistry)/$(imageRepository):latest
+
+          echo "🎉 Successfully built and pushed images to ECR"
       
     - task: AWSCLI@1
       displayName: 'Verify Images in ECR'
