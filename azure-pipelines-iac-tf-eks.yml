@@ -132,44 +132,69 @@ stages:
       displayName: 'Checkout source code'
       
     - task: AWSCLI@1
-      displayName: 'Setup AWS Environment for Build'
+      displayName: 'Verify AWS Connection'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
         awsCommand: 'sts'
         awsSubCommand: 'get-caller-identity'
-      
-    - task: AWSCLI@1
-      displayName: 'Export AWS Credentials to Environment'
-      inputs:
-        awsCredentials: 'aws_cli'
-        regionName: $(awsRegion)
-        awsCommand: 'configure'
-        awsSubCommand: 'list'
-      name: setupAWS
-      
+    
     - script: |
-        echo "=== Debugging AWS Configuration ==="
+        echo "=== Debugging Build Configuration ==="
         echo "AWS Region: $(awsRegion)"
         echo "ECR Registry: $(ecrRegistry)"
         echo "Image Repository: $(imageRepository)"
         echo "Build Tag: $(tag)"
         echo "Dockerfile Path: $(dockerfilePath)"
         
-        echo "=== Verifying AWS Credentials ==="
-        aws sts get-caller-identity
-        
-        echo "=== Getting ECR Login Token ==="
-        ECR_TOKEN=$(aws ecr get-login-password --region $(awsRegion))
-        if [ $? -eq 0 ]; then
-          echo "✅ ECR token retrieved successfully"
+        echo "=== Verifying Dockerfile exists ==="
+        if [ -f "$(dockerfilePath)" ]; then
+          echo "✅ Dockerfile found at $(dockerfilePath)"
+          echo "First 10 lines of Dockerfile:"
+          head -10 $(dockerfilePath)
         else
-          echo "❌ Failed to get ECR token"
+          echo "❌ Dockerfile not found at $(dockerfilePath)"
+          echo "Current directory contents:"
+          ls -la
+          echo "src/ directory contents:"
+          ls -la src/ || echo "src/ directory not found"
           exit 1
         fi
         
-        echo "=== Logging into ECR ==="
-        echo $ECR_TOKEN | docker login --username AWS --password-stdin $(ecrRegistry)
+        echo "=== Building Docker image locally ==="
+        docker build -t temp-flask-app:$(tag) -f $(dockerfilePath) src/
+        if [ $? -eq 0 ]; then
+          echo "✅ Docker build successful"
+          echo "Built image:"
+          docker images | grep temp-flask-app
+        else
+          echo "❌ Docker build failed"
+          exit 1
+        fi
+        
+        echo "=== Tagging for ECR ==="
+        docker tag temp-flask-app:$(tag) $(ecrRegistry)/$(imageRepository):$(tag)
+        docker tag temp-flask-app:$(tag) $(ecrRegistry)/$(imageRepository):latest
+        
+        echo "Tagged images:"
+        docker images | grep $(imageRepository)
+        
+      displayName: 'Build Docker Image'
+    
+    - task: AWSCLI@1
+      displayName: 'ECR Login and Push'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        awsCommand: 'ecr'
+        awsSubCommand: 'get-login-password'
+        awsArguments: '--region $(awsRegion) --output text'
+      name: getECRPassword
+    
+    - script: |
+        echo "=== ECR Authentication and Push ==="
+        # Login to ECR using the password from previous step
+        echo "$(getECRPassword.awsCommand.output)" | docker login --username AWS --password-stdin $(ecrRegistry)
         if [ $? -eq 0 ]; then
           echo "✅ Docker login to ECR successful"
         else
@@ -177,27 +202,7 @@ stages:
           exit 1
         fi
         
-        echo "=== Verifying Dockerfile exists ==="
-        if [ -f "$(dockerfilePath)" ]; then
-          echo "✅ Dockerfile found at $(dockerfilePath)"
-          echo "Dockerfile contents:"
-          head -10 $(dockerfilePath)
-        else
-          echo "❌ Dockerfile not found at $(dockerfilePath)"
-          ls -la src/
-          exit 1
-        fi
-        
-        echo "=== Building Docker image ==="
-        docker build -t $(ecrRegistry)/$(imageRepository):$(tag) -t $(ecrRegistry)/$(imageRepository):latest -f $(dockerfilePath) src/
-        if [ $? -eq 0 ]; then
-          echo "✅ Docker build successful"
-        else
-          echo "❌ Docker build failed"
-          exit 1
-        fi
-        
-        echo "=== Pushing to ECR ==="
+        echo "=== Pushing images to ECR ==="
         docker push $(ecrRegistry)/$(imageRepository):$(tag)
         if [ $? -eq 0 ]; then
           echo "✅ Docker push $(tag) successful"
@@ -214,11 +219,12 @@ stages:
           exit 1
         fi
         
-        echo "Successfully built and pushed: $(ecrRegistry)/$(imageRepository):$(tag)"
+        echo "🎉 Successfully built and pushed: $(ecrRegistry)/$(imageRepository):$(tag)"
         
-      displayName: 'ECR Login, Build and Push Docker Image with Debugging'
-      env:
-        AWS_DEFAULT_REGION: $(awsRegion)
+        # Cleanup local images
+        docker rmi temp-flask-app:$(tag) || true
+        
+      displayName: 'Push to ECR'
       
     - task: AWSCLI@1
       displayName: 'Verify Images in ECR'
