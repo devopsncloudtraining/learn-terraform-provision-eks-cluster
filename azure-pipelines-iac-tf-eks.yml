@@ -212,51 +212,74 @@ stages:
           latest
     
     - task: AWSCLI@1
-      displayName: 'Configure ECR Authentication'
+      displayName: 'Setup AWS Credentials'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
-        awsCommand: 'ecr'
-        awsSubCommand: 'get-login-password'
-        awsArguments: '--region $(awsRegion) --output text > /tmp/ecr_token'
+        awsCommand: 'sts'
+        awsSubCommand: 'get-caller-identity'
         
     - script: |
         echo "=== ECR Authentication and Push ==="
         
-        # Check if token file exists
-        if [ -f "/tmp/ecr_token" ]; then
-          echo "✅ ECR token file found"
-          # Login to ECR
-          cat /tmp/ecr_token | docker login --username AWS --password-stdin $(ecrRegistry)
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ Successfully logged into ECR"
-            
-            # Tag images for ECR
-            docker tag $(imageRepository):$(tag) $(ecrRegistry)/$(imageRepository):$(tag)
-            docker tag $(imageRepository):latest $(ecrRegistry)/$(imageRepository):latest
-            
-            # Push images
-            echo "Pushing $(tag) image..."
-            docker push $(ecrRegistry)/$(imageRepository):$(tag)
-            
-            echo "Pushing latest image..."
-            docker push $(ecrRegistry)/$(imageRepository):latest
-            
-            echo "🎉 Successfully pushed images to ECR!"
-          else
-            echo "❌ Failed to login to ECR"
-            exit 1
-          fi
-        else
-          echo "❌ ECR token file not found"
+        # Get ECR login token
+        echo "Getting ECR authentication token..."
+        ECR_PASSWORD=$(aws ecr get-login-password --region $(awsRegion) 2>&1)
+        
+        if [ $? -ne 0 ]; then
+          echo "❌ Failed to get ECR token"
+          echo "Error: $ECR_PASSWORD"
           exit 1
         fi
         
-        # Cleanup
-        rm -f /tmp/ecr_token
+        echo "✅ ECR token retrieved successfully"
         
-      displayName: 'Push Images to ECR'
+        # Login to ECR
+        echo "Logging into ECR..."
+        echo "$ECR_PASSWORD" | docker login --username AWS --password-stdin $(ecrRegistry)
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Successfully logged into ECR"
+        else
+          echo "❌ Failed to login to ECR"
+          exit 1
+        fi
+        
+        # Tag images for ECR
+        echo "=== Tagging images for ECR ==="
+        docker tag $(imageRepository):$(tag) $(ecrRegistry)/$(imageRepository):$(tag)
+        docker tag $(imageRepository):latest $(ecrRegistry)/$(imageRepository):latest
+        
+        echo "Tagged images:"
+        docker images | grep $(imageRepository)
+        
+        # Push images
+        echo "=== Pushing images to ECR ==="
+        echo "Pushing $(tag) image..."
+        docker push $(ecrRegistry)/$(imageRepository):$(tag)
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Successfully pushed $(tag) image"
+        else
+          echo "❌ Failed to push $(tag) image"
+          exit 1
+        fi
+        
+        echo "Pushing latest image..."
+        docker push $(ecrRegistry)/$(imageRepository):latest
+        
+        if [ $? -eq 0 ]; then
+          echo "✅ Successfully pushed latest image"
+        else
+          echo "❌ Failed to push latest image"
+          exit 1
+        fi
+        
+        echo "🎉 Successfully pushed all images to ECR!"
+        
+      displayName: 'ECR Login and Push Images'
+      env:
+        AWS_DEFAULT_REGION: $(awsRegion)
       
     - task: AWSCLI@1
       displayName: 'Verify Images in ECR'
