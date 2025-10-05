@@ -427,12 +427,29 @@ stages:
         
     - task: Kubernetes@1
       displayName: 'Wait for Deployment Rollout'
+      continueOnError: true
       inputs:
         connectionType: 'Kubernetes Service Connection'
         kubernetesServiceEndpoint: $(kubernetesServiceConnection)
         namespace: $(namespace)
         command: 'rollout'
-        arguments: 'status deployment/flask-app-deployment --timeout=300s'
+        arguments: 'status deployment/flask-app-deployment --timeout=600s'
+        
+    - script: |
+        set -e
+        echo "Validating deployment status..."
+        READY=$(kubectl get deployment flask-app-deployment -n $(namespace) -o jsonpath='{.status.readyReplicas}')
+        DESIRED=$(kubectl get deployment flask-app-deployment -n $(namespace) -o jsonpath='{.status.replicas}')
+        if [ "$READY" != "$DESIRED" ] || [ -z "$READY" ]; then
+          echo "Deployment not fully ready (ready=$READY desired=$DESIRED). Collecting diagnostics..."
+          kubectl get pods -n $(namespace) -o wide
+          kubectl describe deployment flask-app-deployment -n $(namespace)
+          kubectl describe pods -n $(namespace) -l app=flask-app
+          kubectl get events -n $(namespace) --sort-by='.lastTimestamp' | tail -n 50
+          exit 1
+        fi
+        echo "Deployment successfully rolled out (ready=$READY)."
+      displayName: 'Validate Deployment Rollout'
         
     - task: Kubernetes@1
       displayName: 'Get Application Status'
