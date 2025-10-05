@@ -433,23 +433,40 @@ stages:
         kubernetesServiceEndpoint: $(kubernetesServiceConnection)
         namespace: $(namespace)
         command: 'rollout'
-        arguments: 'status deployment/flask-app-deployment --timeout=600s'
+        arguments: 'status deployment/flask-app-deployment --timeout=300s'
         
-    - script: |
-        set -e
-        echo "Validating deployment status..."
-        READY=$(kubectl get deployment flask-app-deployment -n $(namespace) -o jsonpath='{.status.readyReplicas}')
-        DESIRED=$(kubectl get deployment flask-app-deployment -n $(namespace) -o jsonpath='{.status.replicas}')
-        if [ "$READY" != "$DESIRED" ] || [ -z "$READY" ]; then
-          echo "Deployment not fully ready (ready=$READY desired=$DESIRED). Collecting diagnostics..."
-          kubectl get pods -n $(namespace) -o wide
-          kubectl describe deployment flask-app-deployment -n $(namespace)
-          kubectl describe pods -n $(namespace) -l app=flask-app
-          kubectl get events -n $(namespace) --sort-by='.lastTimestamp' | tail -n 50
-          exit 1
-        fi
-        echo "Deployment successfully rolled out (ready=$READY)."
+    - task: AWSShellScript@1
       displayName: 'Validate Deployment Rollout'
+      inputs:
+        awsCredentials: 'aws_cli'
+        regionName: $(awsRegion)
+        scriptType: 'inline'
+        inlineScript: |
+          set -euo pipefail
+
+          echo "Refreshing kubeconfig for cluster $(CLUSTER_NAME)"
+          aws eks update-kubeconfig --name $(CLUSTER_NAME) --region $(awsRegion)
+
+          echo "Validating deployment status..."
+          READY=$(kubectl get deployment flask-app-deployment -n $(namespace) -o jsonpath='{.status.readyReplicas}')
+          DESIRED=$(kubectl get deployment flask-app-deployment -n $(namespace) -o jsonpath='{.status.replicas}')
+
+          if [ -z "$DESIRED" ]; then
+            echo "Deployment not found or replicas not reported. Collecting diagnostics..."
+            kubectl get deployment flask-app-deployment -n $(namespace) -o yaml || true
+            exit 1
+          fi
+
+          if [ "$READY" != "$DESIRED" ] || [ -z "$READY" ]; then
+            echo "Deployment not fully ready (ready=$READY desired=$DESIRED). Collecting diagnostics..."
+            kubectl get pods -n $(namespace) -o wide
+            kubectl describe deployment flask-app-deployment -n $(namespace)
+            kubectl describe pods -n $(namespace) -l app=flask-app
+            kubectl get events -n $(namespace) --sort-by='.lastTimestamp' | tail -n 50
+            exit 1
+          fi
+
+          echo "Deployment successfully rolled out (ready=$READY)."
         
     - task: Kubernetes@1
       displayName: 'Get Application Status'
