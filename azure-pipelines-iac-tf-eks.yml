@@ -181,50 +181,82 @@ stages:
         
       displayName: 'Build Docker Image'
     
+    - script: |
+        echo "=== Build Configuration ==="
+        echo "AWS Region: $(awsRegion)"
+        echo "ECR Registry: $(ecrRegistry)"
+        echo "Image Repository: $(imageRepository)"
+        echo "Build Tag: $(tag)"
+        echo "Dockerfile Path: $(dockerfilePath)"
+        
+        echo "=== Verifying Dockerfile exists ==="
+        if [ -f "$(dockerfilePath)" ]; then
+          echo "✅ Dockerfile found at $(dockerfilePath)"
+        else
+          echo "❌ Dockerfile not found at $(dockerfilePath)"
+          ls -la src/
+          exit 1
+        fi
+        
+      displayName: 'Verify Build Configuration'
+    
+    - task: Docker@2
+      displayName: 'Build Flask Application Image'
+      inputs:
+        command: 'build'
+        Dockerfile: '$(dockerfilePath)'
+        buildContext: 'src'
+        repository: '$(imageRepository)'
+        tags: |
+          $(tag)
+          latest
+    
     - task: AWSCLI@1
-      displayName: 'ECR Login and Push'
+      displayName: 'Configure ECR Authentication'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
         awsCommand: 'ecr'
         awsSubCommand: 'get-login-password'
-        awsArguments: '--region $(awsRegion) --output text'
-      name: getECRPassword
-    
+        awsArguments: '--region $(awsRegion) --output text > /tmp/ecr_token'
+        
     - script: |
         echo "=== ECR Authentication and Push ==="
-        # Login to ECR using the password from previous step
-        echo "$(getECRPassword.awsCommand.output)" | docker login --username AWS --password-stdin $(ecrRegistry)
-        if [ $? -eq 0 ]; then
-          echo "✅ Docker login to ECR successful"
+        
+        # Check if token file exists
+        if [ -f "/tmp/ecr_token" ]; then
+          echo "✅ ECR token file found"
+          # Login to ECR
+          cat /tmp/ecr_token | docker login --username AWS --password-stdin $(ecrRegistry)
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Successfully logged into ECR"
+            
+            # Tag images for ECR
+            docker tag $(imageRepository):$(tag) $(ecrRegistry)/$(imageRepository):$(tag)
+            docker tag $(imageRepository):latest $(ecrRegistry)/$(imageRepository):latest
+            
+            # Push images
+            echo "Pushing $(tag) image..."
+            docker push $(ecrRegistry)/$(imageRepository):$(tag)
+            
+            echo "Pushing latest image..."
+            docker push $(ecrRegistry)/$(imageRepository):latest
+            
+            echo "🎉 Successfully pushed images to ECR!"
+          else
+            echo "❌ Failed to login to ECR"
+            exit 1
+          fi
         else
-          echo "❌ Docker login to ECR failed"
+          echo "❌ ECR token file not found"
           exit 1
         fi
         
-        echo "=== Pushing images to ECR ==="
-        docker push $(ecrRegistry)/$(imageRepository):$(tag)
-        if [ $? -eq 0 ]; then
-          echo "✅ Docker push $(tag) successful"
-        else
-          echo "❌ Docker push $(tag) failed"
-          exit 1
-        fi
+        # Cleanup
+        rm -f /tmp/ecr_token
         
-        docker push $(ecrRegistry)/$(imageRepository):latest
-        if [ $? -eq 0 ]; then
-          echo "✅ Docker push latest successful"
-        else
-          echo "❌ Docker push latest failed"
-          exit 1
-        fi
-        
-        echo "🎉 Successfully built and pushed: $(ecrRegistry)/$(imageRepository):$(tag)"
-        
-        # Cleanup local images
-        docker rmi temp-flask-app:$(tag) || true
-        
-      displayName: 'Push to ECR'
+      displayName: 'Push Images to ECR'
       
     - task: AWSCLI@1
       displayName: 'Verify Images in ECR'
