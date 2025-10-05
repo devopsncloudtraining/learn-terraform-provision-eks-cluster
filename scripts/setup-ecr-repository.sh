@@ -7,7 +7,7 @@ set -e
 
 # Variables
 AWS_REGION=${AWS_REGION:-"us-east-1"}
-REPOSITORY_NAME="flask-static-app"
+REPOSITORY_NAME="flask_static_app"
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 
 echo "Setting up ECR repository for Flask Static App"

@@ -7,7 +7,7 @@ trigger:
 variables:
   # Build variables
   awsECRServiceConnection: 'aws-ecr-connection'
-  imageRepository: 'flask-static-app'
+  imageRepository: 'flask_static_app'
   ecrRegistry: '578478003474.dkr.ecr.us-east-1.amazonaws.com' # Your actual ECR URI
   dockerfilePath: 'src/Dockerfile'
   tag: '$(Build.BuildId)'
@@ -80,13 +80,14 @@ stages:
         awsArguments: '--name $(getClusterName.EKS_CLUSTER_NAME)'
         
     - task: AWSCLI@1
-      displayName: 'Setup ECR Repository'
+      displayName: 'Check if ECR Repository exists'
       inputs:
         awsCredentials: 'aws_cli'
         regionName: $(awsRegion)
         awsCommand: 'ecr'
         awsSubCommand: 'describe-repositories'
-        awsArguments: '--repository-names $(imageRepository) || echo "Repository does not exist, will create"'
+        awsArguments: '--repository-names $(imageRepository)'
+      continueOnError: true
         
     - task: AWSCLI@1
       displayName: 'Create ECR Repository if not exists'
