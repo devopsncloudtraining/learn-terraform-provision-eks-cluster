@@ -24,7 +24,7 @@
                 "ecr:PutImage"
             ],
             "Resource": [
-                "arn:aws:ecr:us-east-1:123456789012:repository/flask-static-app"
+                "arn:aws:ecr:us-east-1:578478003474:repository/flask-static-app"
             ]
         }
     ]
