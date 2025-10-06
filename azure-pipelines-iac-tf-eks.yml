@@ -79,15 +79,15 @@ stages:
         awsSubCommand: 'update-kubeconfig'
         awsArguments: '--name $(getClusterName.EKS_CLUSTER_NAME)'
         
-    - task: AWSCLI@1
-      displayName: 'Check if ECR Repository exists'
-      inputs:
-        awsCredentials: 'aws_cli'
-        regionName: $(awsRegion)
-        awsCommand: 'ecr'
-        awsSubCommand: 'describe-repositories'
-        awsArguments: '--repository-names $(imageRepository)'
-      continueOnError: true
+    # - task: AWSCLI@1
+    #   displayName: 'Check if ECR Repository exists'
+    #   inputs:
+    #     awsCredentials: 'aws_cli'
+    #     regionName: $(awsRegion)
+    #     awsCommand: 'ecr'
+    #     awsSubCommand: 'describe-repositories'
+    #     awsArguments: '--repository-names $(imageRepository)'
+    #   continueOnError: true
         
     - task: AWSCLI@1
       displayName: 'Create ECR Repository if not exists'
