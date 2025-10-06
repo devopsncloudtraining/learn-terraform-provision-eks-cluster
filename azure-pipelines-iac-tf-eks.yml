@@ -8,7 +8,7 @@ variables:
   # Build variables
   awsECRServiceConnection: 'aws-ecr-connection'
   imageRepository: 'flask_static_app'
-  ecrRegistry: '905418462597.dkr.ecr.us-east-1.amazonaws.com/flask_static_app' # Your actual ECR URI
+  ecrRegistry: '905418462597.dkr.ecr.us-east-1.amazonaws.com' # Your actual ECR URI
   dockerfilePath: 'src/Dockerfile'
   tag: '$(Build.BuildId)'
   imagePullPolicy: 'Always'
