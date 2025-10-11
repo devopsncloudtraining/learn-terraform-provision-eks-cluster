@@ -1,4 +1,4 @@
-name: EKS CI/CD
+name: EKS CI/CD Pipeline
 
 on:
   push:
@@ -226,9 +226,4 @@ jobs:
           kubectl logs -n "${KUBE_NAMESPACE}" -l app=flask-app --tail=100 || true
           kubectl get events -n "${KUBE_NAMESPACE}" --sort-by='.lastTimestamp' | tail -n 50 || true
 
-      - name: Display ingress endpoint
-        run: |
-          kubectl get ingress flask-app-ingress \
-            -n "${KUBE_NAMESPACE}" \
-            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
             
