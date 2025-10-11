@@ -1,0 +1,234 @@
+name: EKS CI/CD
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: eks-ci-cd
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: flask_static_app
+  KUBE_NAMESPACE: default
+  TF_BACKEND_BUCKET: tf-state-file-4-az-pipeline-eks
+  TF_BACKEND_KEY: terraform.tfstate
+  DOCKERFILE_PATH: src/Dockerfile
+  IMAGE_TAG: ${{ github.run_number }}
+  TERRAFORM_VERSION: 1.7.5
+
+jobs:
+  terraform:
+    name: Provision infrastructure
+    runs-on: ubuntu-latest
+    outputs:
+      cluster_name: ${{ steps.outputs-cluster.outputs.cluster_name }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Terraform Init
+        working-directory: .
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_BACKEND_BUCKET}" \
+            -backend-config="key=${TF_BACKEND_KEY}" \
+            -backend-config="region=${AWS_REGION}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform Plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform Apply
+        run: terraform apply -auto-approve tfplan
+
+      - name: Capture cluster name
+        id: outputs-cluster
+        run: |
+          set -euo pipefail
+          CLUSTER_NAME=$(terraform output -raw cluster_name)
+          echo "cluster_name=${CLUSTER_NAME}" >> "$GITHUB_OUTPUT"
+          echo "CLUSTER_NAME=${CLUSTER_NAME}" >> "$GITHUB_ENV"
+
+      - name: Ensure ECR repository exists
+        run: |
+          set -euo pipefail
+          aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" >/dev/null 2>&1 || \
+          aws ecr create-repository \
+            --repository-name "${ECR_REPOSITORY}" \
+            --image-scanning-configuration scanOnPush=true \
+            --encryption-configuration encryptionType=AES256
+
+      - name: Configure ECR lifecycle policy
+        run: |
+          set -euo pipefail
+          POLICY='{"rules":[{"rulePriority":1,"description":"Keep last 10 images","selection":{"tagStatus":"any","countType":"imageCountMoreThan","countNumber":10},"action":{"type":"expire"}}]}'
+          aws ecr put-lifecycle-policy \
+            --repository-name "${ECR_REPOSITORY}" \
+            --lifecycle-policy-text "${POLICY}"
+
+  build:
+    name: Build and push image
+    runs-on: ubuntu-latest
+    needs: terraform
+    outputs:
+      image_uri: ${{ steps.build-push.outputs.image_uri }}
+      ecr_registry: ${{ steps.login-ecr.outputs.registry }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push Docker image
+        id: build-push
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_URI="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "=== Build configuration ==="
+          echo "AWS Region: ${AWS_REGION}"
+          echo "ECR Registry: ${ECR_REGISTRY}"
+          echo "Repository: ${ECR_REPOSITORY}"
+          echo "Image tag: ${IMAGE_TAG}"
+          echo "Dockerfile: ${DOCKERFILE_PATH}"
+
+          if [ ! -f "${DOCKERFILE_PATH}" ]; then
+            echo "Dockerfile not found at ${DOCKERFILE_PATH}" >&2
+            exit 1
+          fi
+
+          docker build \
+            --file "${DOCKERFILE_PATH}" \
+            --tag "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" \
+            --tag "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest" \
+            src
+
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+          echo "image_uri=${IMAGE_URI}" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs:
+      - terraform
+      - build
+    env:
+      CLUSTER_NAME: ${{ needs.terraform.outputs.cluster_name }}
+      IMAGE_URI: ${{ needs.build.outputs.image_uri }}
+      ECR_REGISTRY: ${{ needs.build.outputs.ecr_registry }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig
+        run: |
+          set -euo pipefail
+          aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+
+      - name: Ensure namespace exists
+        run: |
+          set -euo pipefail
+          kubectl get namespace "${KUBE_NAMESPACE}" >/dev/null 2>&1 || \
+          kubectl create namespace "${KUBE_NAMESPACE}"
+
+      - name: Create/Update ECR image pull secret
+        run: |
+          set -euo pipefail
+          TOKEN=$(aws ecr get-login-password --region "${AWS_REGION}")
+          kubectl create secret docker-registry ecr-registry-secret \
+            --namespace "${KUBE_NAMESPACE}" \
+            --docker-server "${ECR_REGISTRY}" \
+            --docker-username AWS \
+            --docker-password "${TOKEN}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Apply service account and RBAC resources
+        run: |
+          set -euo pipefail
+          kubectl apply -n "${KUBE_NAMESPACE}" -f manifests/serviceaccount-ecr.yaml
+
+      - name: Patch service account with image pull secret
+        run: |
+          set -euo pipefail
+          kubectl patch serviceaccount deploy-robot \
+            -n "${KUBE_NAMESPACE}" \
+            --type merge \
+            -p '{"imagePullSecrets":[{"name":"ecr-registry-secret"}]}' || true
+
+      - name: Apply core manifests
+        run: |
+          set -euo pipefail
+          kubectl apply -n "${KUBE_NAMESPACE}" -f manifests/configmap.yaml
+          kubectl apply -n "${KUBE_NAMESPACE}" -f manifests/service.yaml
+          kubectl apply -n "${KUBE_NAMESPACE}" -f manifests/pdb.yaml
+          kubectl apply -n "${KUBE_NAMESPACE}" -f manifests/hpa.yaml
+          kubectl apply -n "${KUBE_NAMESPACE}" -f manifests/ingress.yaml
+
+      - name: Apply deployment with new image
+        run: |
+          set -euo pipefail
+          sed "s|#{DOCKER_IMAGE_TAG}#|${IMAGE_URI}|g" manifests/deployment.yaml | \
+            kubectl apply -n "${KUBE_NAMESPACE}" -f -
+
+      - name: Wait for rollout
+        run: |
+          set -euo pipefail
+          kubectl rollout status deployment/flask-app-deployment \
+            -n "${KUBE_NAMESPACE}" \
+            --timeout=300s
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -n "${KUBE_NAMESPACE}" -o wide || true
+          kubectl describe deployment/flask-app-deployment -n "${KUBE_NAMESPACE}" || true
+          kubectl describe pods -n "${KUBE_NAMESPACE}" -l app=flask-app || true
+          kubectl logs -n "${KUBE_NAMESPACE}" -l app=flask-app --tail=100 || true
+          kubectl get events -n "${KUBE_NAMESPACE}" --sort-by='.lastTimestamp' | tail -n 50 || true
+
+      - name: Display ingress endpoint
+        run: |
+          kubectl get ingress flask-app-ingress \
+            -n "${KUBE_NAMESPACE}" \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' || true
+            
