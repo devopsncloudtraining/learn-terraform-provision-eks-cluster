@@ -75,7 +75,7 @@ cd learn-terraform-provision-eks-cluster
 ### 2. Customize Configuration
 
 - **ECR registry URI** – Update `variables.ecrRegistry` in the pipeline or store it as a pipeline variable secret.
-- **AWS backend bucket** – The Terraform backend expects a bucket named `tf-state-file-4-az-pipeline-eks`. Adjust `backendAWSBucketName` if you use something different.
+- **AWS backend bucket** – The Terraform backend expects a bucket named `tf-state-file-4-az-pipeline-eks-test`. Adjust `backendAWSBucketName` if you use something different.
 - **Application manifests** – Edit files under `manifests/` to change image names, resource limits, ingress rules, etc.
 
 ### 3. Configure Azure DevOps

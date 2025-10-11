@@ -45,7 +45,7 @@ stages:
         provider: 'aws'
         command: 'init'
         backendServiceAWS: $(awsServiceConnection)
-        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks'
+        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks-test'
         backendAWSKey: 'terraform.tfstate'
         
     - task: TerraformTask@5
@@ -257,7 +257,7 @@ stages:
         provider: 'aws'
         command: 'init'
         backendServiceAWS: $(awsServiceConnection)
-        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks'
+        backendAWSBucketName: 'tf-state-file-4-az-pipeline-eks-test'
         backendAWSKey: 'terraform.tfstate'
       
     - script: |

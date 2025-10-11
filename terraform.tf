@@ -10,7 +10,7 @@ terraform {
   # }
 
   backend "s3" {
-    bucket = "tf-state-file-4-az-pipeline-eks" # Will be overridden from build
+    bucket = "tf-state-file-4-az-pipeline-eks-test" # Will be overridden from build
     key    = "terraform.tfstate" # Will be overridden from build
     region = "us-east-1"
   }

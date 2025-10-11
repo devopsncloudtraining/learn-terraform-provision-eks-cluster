@@ -17,7 +17,7 @@ env:
   AWS_REGION: us-east-1
   ECR_REPOSITORY: flask_static_app
   KUBE_NAMESPACE: default
-  TF_BACKEND_BUCKET: tf-state-file-4-az-pipeline-eks
+  TF_BACKEND_BUCKET: tf-state-file-4-az-pipeline-eks-test
   TF_BACKEND_KEY: terraform.tfstate
   DOCKERFILE_PATH: src/Dockerfile
   IMAGE_TAG: ${{ github.run_number }}
